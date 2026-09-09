@@ -10,6 +10,7 @@ const publicUser = (user) => ({
         ? ["orders:read", "orders:write"]
         : user.permissions || [],
   isActive: user.isActive,
+  emailVerified: user.emailVerified !== false,
   phone: user.phone || "",
 });
 

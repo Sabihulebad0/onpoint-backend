@@ -12,11 +12,14 @@ const productRoutes = require("./routes/productRoutes");
 const cartRoutes = require("./routes/cartRoutes");
 const orderRoutes = require("./routes/orderRoutes");
 const userRoutes = require("./routes/userRoutes");
+const customerRoutes = require("./routes/customerRoutes");
+const addressRoutes = require("./routes/addressRoutes");
 const searchRoutes = require("./routes/searchRoutes");
 const couponRoutes = require("./routes/couponRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 const attributeRoutes = require("./routes/attributeRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
+const contactRoutes = require("./routes/contactRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -39,11 +42,14 @@ app.use("/api/products", productRoutes);
 app.use("/api/cart", cartRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/customers", customerRoutes);
+app.use("/api/addresses", addressRoutes);
 app.use("/api/search", searchRoutes);
 app.use("/api/coupons", couponRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/attributes", attributeRoutes);
 app.use("/api/dashboard", dashboardRoutes);
+app.use("/api/contact", contactRoutes);
 
 app.use(errorHandler);
 
@@ -52,9 +58,10 @@ const start = async () => {
     await connectDB();
     await initStorage();
     const preferred = Number(process.env.PORT || 5000);
+    const host = process.env.HOST || "0.0.0.0";
     const tryListen = (port) =>
       new Promise((resolve, reject) => {
-        const server = app.listen(port, () => resolve(port));
+        const server = app.listen(port, host, () => resolve(port));
         server.once("error", reject);
       });
 
@@ -67,7 +74,7 @@ const start = async () => {
       await tryListen(port);
       console.log(`Port ${preferred} is in use`);
     }
-    console.log(`Server running on port ${port}`);
+    console.log(`Server running on http://${host}:${port}`);
   } catch (error) {
     console.error("Failed to start server:", error.message);
     process.exit(1);

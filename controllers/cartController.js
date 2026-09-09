@@ -16,6 +16,7 @@ const pricedItemsFromCart = (cart) =>
         unitPrice: product.salePrice,
         size: item.size,
         color: item.color,
+        custom: Boolean(item.custom),
       };
     });
 
@@ -28,10 +29,20 @@ const withCartPricing = async (cart) => {
     quantity: item.quantity,
     size: item.size,
     color: item.color,
+    custom: Boolean(item.custom),
   }));
   const itemsPrice = Number(
     pricedItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0).toFixed(2)
   );
+  const originalItemsPrice = Number(
+    pricedItems
+      .reduce((sum, item) => {
+        const original = Number(item.product.originalPrice ?? item.product.price ?? 0);
+        return sum + original * item.quantity;
+      }, 0)
+      .toFixed(2)
+  );
+  const productDiscount = Number(Math.max(0, originalItemsPrice - itemsPrice).toFixed(2));
   let couponDiscount = 0;
   let coupon = null;
   let couponError = null;
@@ -49,8 +60,11 @@ const withCartPricing = async (cart) => {
   return {
     ...data,
     itemsPrice,
+    originalItemsPrice,
+    productDiscount,
     couponCode: data.couponCode || "",
     couponDiscount,
+    discountTotal: Number((productDiscount + couponDiscount).toFixed(2)),
     coupon,
     couponError,
     shippingPrice,
@@ -77,6 +91,7 @@ const addToCart = async (req, res, next) => {
     const qty = Number(req.body.quantity ?? 1);
     const size = String(req.body.size || "").trim();
     const color = String(req.body.color || "").trim();
+    const custom = Boolean(req.body.custom);
 
     if (!productId) {
       return res.status(400).json({ message: "productId is required" });
@@ -110,7 +125,8 @@ const addToCart = async (req, res, next) => {
       (item) =>
         item.product.toString() === productId &&
         (item.size || "") === resolvedSize &&
-        (item.color || "") === resolvedColor
+        (item.color || "") === resolvedColor &&
+        Boolean(item.custom) === custom
     );
 
     const nextQty = (existing ? existing.quantity : 0) + Math.floor(qty);
@@ -121,7 +137,13 @@ const addToCart = async (req, res, next) => {
     if (existing) {
       existing.quantity = nextQty;
     } else {
-      cart.items.push({ product: productId, quantity: Math.floor(qty), size: resolvedSize, color: resolvedColor });
+      cart.items.push({
+        product: productId,
+        quantity: Math.floor(qty),
+        size: resolvedSize,
+        color: resolvedColor,
+        custom,
+      });
     }
 
     await cart.save();
@@ -134,7 +156,7 @@ const addToCart = async (req, res, next) => {
 
 const updateCartItem = async (req, res, next) => {
   try {
-    const { productId, quantity, size, color } = req.body;
+    const { productId, quantity, size, color, custom } = req.body;
     const cart = await Cart.findOne({ user: req.user._id });
 
     if (!cart) {
@@ -145,7 +167,8 @@ const updateCartItem = async (req, res, next) => {
       (entry) =>
         entry.product.toString() === productId &&
         (entry.size || "") === (size || "") &&
-        (entry.color || "") === (color || "")
+        (entry.color || "") === (color || "") &&
+        Boolean(entry.custom) === Boolean(custom)
     );
 
     if (!item) {
@@ -171,6 +194,7 @@ const removeCartItem = async (req, res, next) => {
     const productId = String(req.body.productId || req.body.product || "").trim();
     const size = String(req.body.size || "").trim();
     const color = String(req.body.color || "").trim();
+    const custom = Boolean(req.body.custom);
     if (!productId) {
       return res.status(400).json({ message: "productId is required" });
     }
@@ -186,7 +210,8 @@ const removeCartItem = async (req, res, next) => {
         !(
           entry.product.toString() === productId &&
           (entry.size || "") === size &&
-          (entry.color || "") === color
+          (entry.color || "") === color &&
+          Boolean(entry.custom) === custom
         )
     );
     if (cart.items.length === before) {

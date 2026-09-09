@@ -1,3 +1,4 @@
+const crypto = require("crypto");
 const mongoose = require("mongoose");
 const Order = require("../models/Order");
 const Cart = require("../models/Cart");
@@ -10,7 +11,8 @@ const { hasPermission } = require("../utils/permissions");
 const { buildOrderTotals, withOrderTotals } = require("../utils/orderTotals");
 const { normalizeShippingAddress } = require("../utils/orderAddress");
 const { notifyAdmins, notifyUser } = require("../utils/notify");
-const { salesTaxForAddress } = require("../utils/usSalesTax");
+const { sendOrderCreatedEmail, sendOrderStatusEmail } = require("../utils/mail");
+const { upsertCustomerFromOrder } = require("../utils/customer");
 
 const ORDER_STATUSES = ["pending", "paid", "shipped", "delivered", "cancelled", "returned", "refunded"];
 const LOW_STOCK_THRESHOLD = 5;
@@ -32,15 +34,57 @@ const monthRange = (month) => {
   };
 };
 
+const productPopulate = { path: "items.product", populate: { path: "category", select: "name slug discountPercent" } };
+
+const loadBodyItems = async (rawItems = []) => {
+  const rows = [];
+  for (const row of rawItems) {
+    const productId = row.productId || row.product;
+    if (!productId) continue;
+    const product = await Product.findById(productId).populate("category", "name slug discountPercent");
+    if (!product) continue;
+    rows.push({
+      product,
+      quantity: Math.max(1, Number(row.quantity || 1)),
+      size: String(row.size || ""),
+      color: String(row.color || ""),
+      custom: Boolean(row.custom),
+    });
+  }
+  return rows;
+};
+
+const loadUserCartRows = async (userId) => {
+  const cart = await Cart.findOne({ user: userId }).populate(productPopulate);
+  if (!cart) return { cart: null, rows: [] };
+  return {
+    cart,
+    rows: (cart.items || [])
+      .filter((item) => item.product)
+      .map((item) => ({
+        product: item.product,
+        quantity: item.quantity,
+        size: item.size,
+        color: item.color,
+        custom: Boolean(item.custom),
+      })),
+  };
+};
+
+const resolveCheckoutRows = async (req) => {
+  if (req.user) {
+    const loaded = await loadUserCartRows(req.user._id);
+    if (loaded.rows.length) return loaded;
+  }
+  return { cart: null, rows: await loadBodyItems(req.body?.items || []) };
+};
+
 const createOrder = async (req, res, next) => {
   try {
     const { shippingAddress, shipping_address, paymentMethod = "cod", couponCode } = req.body;
-    const cart = await Cart.findOne({ user: req.user._id }).populate({
-      path: "items.product",
-      populate: { path: "category", select: "name slug discountPercent" },
-    });
+    const { cart, rows } = await resolveCheckoutRows(req);
 
-    if (!cart || cart.items.length === 0) {
+    if (!rows.length) {
       return res.status(400).json({ message: "Cart is empty" });
     }
 
@@ -48,9 +92,9 @@ const createOrder = async (req, res, next) => {
     const pricedItems = [];
     let itemsPrice = 0;
 
-    for (const item of cart.items) {
+    for (const item of rows) {
       const product = item.product;
-      if (!product || product.stock < item.quantity) {
+      if (!product || Number(product.stock || 0) < item.quantity) {
         return res.status(400).json({
           message: `Insufficient stock for ${product ? product.name : "a product"}`,
         });
@@ -66,12 +110,13 @@ const createOrder = async (req, res, next) => {
         price: priced.salePrice,
         size: item.size,
         color: item.color,
+        custom: Boolean(item.custom),
       });
       pricedItems.push({ product: priced, quantity: item.quantity, unitPrice: priced.salePrice });
       itemsPrice += priced.salePrice * item.quantity;
     }
 
-    const requestedCode = normalizeCode(couponCode || cart.couponCode);
+    const requestedCode = normalizeCode(couponCode || cart?.couponCode);
     let couponDiscount = 0;
     let appliedCode = "";
     let couponDoc = null;
@@ -85,16 +130,17 @@ const createOrder = async (req, res, next) => {
       couponDoc = result.coupon;
     }
 
+    const guestName = [shipping_address?.first_name, shipping_address?.last_name, req.body.customerName]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
     const shippingPrice = itemsPrice >= 100 ? 0 : 8;
     const shipping = normalizeShippingAddress(
       { ...(shippingAddress || {}), ...(shipping_address || {}) },
-      req.user.name
+      req.user?.name || guestName
     );
     if (!shipping.address_line1 || !shipping.city || !shipping.postal_code || !shipping.country_code) {
       return res.status(400).json({ message: "Complete shipping address is required" });
-    }
-    if (shipping.country_code === "US" && !salesTaxForAddress(shipping).code) {
-      return res.status(400).json({ message: "Enter a valid US state so sales tax can be calculated" });
     }
     const tax = salesTaxForAddress(shipping);
     const totals = buildOrderTotals({
@@ -105,10 +151,25 @@ const createOrder = async (req, res, next) => {
       currency: req.body.currency || process.env.CURRENCY,
     });
     const totalPrice = totals.grand_total;
-    const phone = shippingAddress?.phone || shipping_address?.phone || req.user.phone || "";
+    const phone = shippingAddress?.phone || shipping_address?.phone || req.user?.phone || req.body.customerPhone || "";
+    const customerName =
+      req.user?.name ||
+      req.body.customerName ||
+      [shipping.first_name, shipping.last_name].filter(Boolean).join(" ").trim() ||
+      "Guest";
+    const customerEmail = String(req.body.customerEmail || shipping_address?.email || req.user?.email || "")
+      .trim()
+      .toLowerCase();
+    if (!req.user && !customerEmail) {
+      return res.status(400).json({ message: "Email is required for guest checkout" });
+    }
+    const isGuest = !req.user;
+    const guestToken = isGuest ? crypto.randomBytes(16).toString("hex") : "";
 
     const order = await Order.create({
-      user: req.user._id,
+      user: req.user?._id || null,
+      isGuest,
+      guestToken,
       items,
       shipping_address: shipping,
       shippingAddress: {
@@ -129,16 +190,29 @@ const createOrder = async (req, res, next) => {
       taxRate: tax.rate,
       taxState: tax.code,
       trackingId: `TRK${Date.now().toString(36).toUpperCase()}`,
-      customerName: req.user.name,
-      customerEmail: req.user.email,
+      customerName,
+      customerEmail,
       customerPhone: phone,
     });
+
+    const customer = await upsertCustomerFromOrder({
+      user: req.user,
+      isGuest,
+      customerName,
+      customerEmail,
+      customerPhone: phone,
+      shipping_address: { ...shipping, phone, email: customerEmail, label: shipping_address?.label || "Home" },
+    });
+    if (customer) {
+      order.customer = customer._id;
+      await order.save();
+    }
 
     if (couponDoc) {
       await Coupon.findByIdAndUpdate(couponDoc._id, { $inc: { usedCount: 1 } });
     }
 
-    for (const item of cart.items) {
+    for (const item of rows) {
       const updated = await Product.findByIdAndUpdate(
         item.product._id,
         { $inc: { stock: -item.quantity } },
@@ -155,17 +229,21 @@ const createOrder = async (req, res, next) => {
       }
     }
 
-    cart.items = [];
-    cart.couponCode = "";
-    await cart.save();
+    if (cart) {
+      cart.items = [];
+      cart.couponCode = "";
+      await cart.save();
+    }
 
     await notifyAdmins({
-      title: `New order from ${req.user.name}`,
+      title: `New ${isGuest ? "guest " : ""}order from ${customerName}`,
       message: `${items.length} item(s) for ${totals.currency || ""} ${totalPrice.toFixed(2)} via ${paymentMethod}.`.trim(),
       type: "order",
       link: `/orders/${order._id}`,
       meta: { orderId: order._id, totalPrice },
     });
+
+    sendOrderCreatedEmail(order).catch((error) => console.error("[mail] order confirmation failed:", error.message));
 
     res.status(201).json(withOrderTotals(order));
   } catch (error) {
@@ -176,17 +254,14 @@ const createOrder = async (req, res, next) => {
 const quoteOrder = async (req, res, next) => {
   try {
     const { shippingAddress, shipping_address, couponCode } = req.body || {};
-    const cart = await Cart.findOne({ user: req.user._id }).populate({
-      path: "items.product",
-      populate: { path: "category", select: "name slug discountPercent" },
-    });
-    if (!cart || cart.items.length === 0) {
+    const { cart, rows } = await resolveCheckoutRows(req);
+    if (!rows.length) {
       return res.status(400).json({ message: "Cart is empty" });
     }
 
     const pricedItems = [];
     let itemsPrice = 0;
-    for (const item of cart.items) {
+    for (const item of rows) {
       const product = item.product;
       if (!product) continue;
       const priced = withPricing(product);
@@ -194,7 +269,7 @@ const quoteOrder = async (req, res, next) => {
       itemsPrice += priced.salePrice * item.quantity;
     }
 
-    const requestedCode = normalizeCode(couponCode || cart.couponCode);
+    const requestedCode = normalizeCode(couponCode || cart?.couponCode);
     let couponDiscount = 0;
     let appliedCode = "";
     if (requestedCode) {
@@ -208,7 +283,7 @@ const quoteOrder = async (req, res, next) => {
     const shippingPrice = itemsPrice >= 100 ? 0 : 8;
     const shipping = normalizeShippingAddress(
       { ...(shippingAddress || {}), ...(shipping_address || {}) },
-      req.user.name
+      req.user?.name || req.body?.customerName || ""
     );
     const tax = salesTaxForAddress(shipping);
     const totals = buildOrderTotals({
@@ -323,8 +398,10 @@ const getOrder = async (req, res, next) => {
       return res.status(404).json({ message: "Order not found" });
     }
     const ownerId = order.user?._id || order.user;
-    const isOwner = String(ownerId) === String(req.user._id);
-    if (!isOwner && !hasPermission(req.user, "orders:read")) {
+    const isOwner = Boolean(req.user && ownerId && String(ownerId) === String(req.user._id));
+    const guestOk = Boolean(order.isGuest && order.guestToken && String(req.query.guest || "") === String(order.guestToken));
+    const staffOk = Boolean(req.user && hasPermission(req.user, "orders:read"));
+    if (!isOwner && !guestOk && !staffOk) {
       return res.status(403).json({ message: "You do not have permission for this action" });
     }
     res.json(withOrderTotals(order));
@@ -362,6 +439,8 @@ const updateOrderStatus = async (req, res, next) => {
       meta: { orderId: order._id, status },
       createdBy: req.user._id,
     });
+
+    sendOrderStatusEmail(order, status).catch((error) => console.error("[mail] order status email failed:", error.message));
 
     res.json(withOrderTotals(order));
   } catch (error) {

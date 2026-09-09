@@ -1,6 +1,7 @@
 const User = require("../models/User");
 const { PERMISSIONS, ROLES } = require("../utils/permissions");
 const { publicUser } = require("../utils/publicUser");
+const { upsertCustomerFromUser } = require("../utils/customer");
 
 const sanitizePermissions = (permissions = []) =>
   [...new Set(permissions)].filter((item) => PERMISSIONS.includes(item));
@@ -66,8 +67,10 @@ const createUser = async (req, res, next) => {
       password,
       role,
       phone,
+      emailVerified: true,
       permissions: role === "admin" ? [] : sanitizePermissions(permissions),
     });
+    await upsertCustomerFromUser(user);
 
     res.status(201).json({ user: publicUser(user) });
   } catch (error) {

@@ -40,6 +40,7 @@ const productSchema = new mongoose.Schema(
       ref: "Category",
       required: true,
     },
+    type: { type: String, enum: ["standard", "customizable"], default: "standard", index: true },
     price: { type: Number, required: true, min: 0 },
     discountPercent: { type: Number, min: 0, max: 100, default: null },
     compareAtPrice: { type: Number, min: 0 },

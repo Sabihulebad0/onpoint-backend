@@ -1,7 +1,11 @@
 const Product = require("../models/Product");
+const Category = require("../models/Category");
 const { saveImage, storageMode } = require("../config/storage");
 const { withPricing } = require("../utils/pricing");
 const { parseCouponFields, upsertScopedCoupon, couponsForTarget } = require("../utils/coupon");
+const { parseType } = require("../utils/itemType");
+
+const CATEGORY_FIELDS = "name slug discountPercent type";
 
 const parseDiscount = (value, fallback = null) => {
   if (value === undefined) return fallback;
@@ -136,11 +140,17 @@ const buildPayload = async (req, existing = {}) => {
     req.body.variants === undefined ? existing.variants || [] : parseVariants(req.body.variants);
   const attributes =
     req.body.attributes === undefined ? existing.attributes || [] : parseList(req.body.attributes);
-  // With variants on, the product-level stock is the roll-up of its combinations.
   const stock =
     hasVariants && variants.length
       ? variants.reduce((total, variant) => total + Number(variant.stock || 0), 0)
       : Number(req.body.stock || 0);
+
+  let type = parseType(req.body.type, "");
+  if (!type && req.body.category) {
+    const category = await Category.findById(req.body.category).select("type");
+    type = parseType(category?.type, existing.type || "standard");
+  }
+  if (!type) type = parseType(existing.type, "standard");
 
   return {
     name: req.body.name,
@@ -157,6 +167,7 @@ const buildPayload = async (req, existing = {}) => {
     sport: req.body.sport,
     brand: req.body.brand || "",
     category: req.body.category,
+    type,
     price: Number(req.body.price),
     discountPercent: parseDiscount(req.body.discountPercent, existing.discountPercent ?? null),
     compareAtPrice: req.body.compareAtPrice === "" || req.body.compareAtPrice == null
@@ -209,8 +220,8 @@ const searchProducts = async (req, res, next) => {
 
     const [products, total] = await Promise.all([
       Product.find(filter)
-        .populate("category", "name slug discountPercent")
-        .sort({ createdAt: -1 })
+        .populate("category", CATEGORY_FIELDS)
+        .sort({ type: 1, createdAt: -1 })
         .limit(limit),
       Product.countDocuments(filter),
     ]);
@@ -238,6 +249,7 @@ const getProducts = async (req, res, next) => {
       minPrice,
       maxPrice,
       status,
+      type,
     } = req.query;
     const filter = {};
     if (includeInactive !== "true") filter.isActive = true;
@@ -255,12 +267,25 @@ const getProducts = async (req, res, next) => {
     }
     if (status === "soldout") filter.stock = 0;
     if (status === "selling") filter.stock = { $gt: 0 };
+    const parsedType = parseType(type, "");
+    if (parsedType) {
+      const typedCategories = await Category.find({ type: parsedType }).select("_id");
+      const typeMatch = {
+        $or: [{ type: parsedType }, { category: { $in: typedCategories.map((item) => item._id) } }],
+      };
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, typeMatch];
+        delete filter.$or;
+      } else {
+        Object.assign(filter, typeMatch);
+      }
+    }
 
     const skip = (Number(page) - 1) * Number(limit);
     const [products, total] = await Promise.all([
       Product.find(filter)
-        .populate("category", "name slug discountPercent")
-        .sort({ createdAt: -1 })
+        .populate("category", CATEGORY_FIELDS)
+        .sort({ type: 1, createdAt: -1 })
         .skip(skip)
         .limit(Number(limit)),
       Product.countDocuments(filter),
@@ -280,7 +305,7 @@ const getProducts = async (req, res, next) => {
 const getProductById = async (req, res, next) => {
   try {
     const product = await Product.findById(req.params.id)
-      .populate("category", "name slug discountPercent")
+      .populate("category", CATEGORY_FIELDS)
       .populate("attributes", "title displayName option values isActive");
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
@@ -299,7 +324,7 @@ const createProduct = async (req, res, next) => {
   try {
     const payload = await buildPayload(req);
     const product = await Product.create(payload);
-    await product.populate("category", "name slug discountPercent");
+    await product.populate("category", CATEGORY_FIELDS);
     const couponInput = parseCouponFields(req.body);
     if (couponInput) {
       await upsertScopedCoupon({ ...couponInput, appliesTo: "product", productId: product._id });
@@ -333,7 +358,7 @@ const updateProduct = async (req, res, next) => {
         },
       },
       { new: true, runValidators: true, overwrite: false, strict: false }
-    ).populate("category", "name slug discountPercent");
+    ).populate("category", CATEGORY_FIELDS);
     const couponInput = parseCouponFields(req.body);
     if (couponInput) {
       await upsertScopedCoupon({ ...couponInput, appliesTo: "product", productId: product._id });
@@ -367,7 +392,7 @@ const patchProductFlags = async (req, res, next) => {
     if (req.body.featured !== undefined) product.featured = parseBoolean(req.body.featured, product.featured);
     if (req.body.isActive !== undefined) product.isActive = parseBoolean(req.body.isActive, product.isActive);
     await product.save();
-    await product.populate("category", "name slug discountPercent");
+    await product.populate("category", CATEGORY_FIELDS);
     res.json(withPricing(product));
   } catch (error) {
     next(error);

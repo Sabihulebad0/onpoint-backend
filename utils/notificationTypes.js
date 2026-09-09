@@ -1,4 +1,4 @@
-const NOTIFICATION_TYPES = ["order", "product", "user", "coupon", "cart", "system"];
+const NOTIFICATION_TYPES = ["order", "product", "user", "coupon", "cart", "system", "contact"];
 
 const NOTIFICATION_AUDIENCES = ["admin", "customer"];
 

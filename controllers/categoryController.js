@@ -3,6 +3,7 @@ const Category = require("../models/Category");
 const Product = require("../models/Product");
 const Coupon = require("../models/Coupon");
 const { parseCouponFields, upsertScopedCoupon, couponsForTarget } = require("../utils/coupon");
+const { parseType } = require("../utils/itemType");
 const { saveImage } = require("../config/storage");
 
 const slugify = (name) =>
@@ -39,8 +40,10 @@ const getCategories = async (req, res, next) => {
   try {
     const filter = {};
     if (req.query.includeInactive !== "true") filter.isActive = { $ne: false };
+    const type = parseType(req.query.type, "");
+    if (type) filter.type = type;
     const [categories, grouped, coupons] = await Promise.all([
-      Category.find(filter).sort({ name: 1 }).lean(),
+      Category.find(filter).sort({ type: 1, name: 1 }).lean(),
       Product.aggregate([
         { $group: { _id: { $toString: "$category" }, count: { $sum: 1 } } },
       ]),
@@ -76,6 +79,7 @@ const createCategory = async (req, res, next) => {
       description: description || "",
       icon: await resolveIcon(req),
       parent: parseParent(req.body.parent),
+      type: parseType(req.body.type),
       isActive: parseBoolean(req.body.isActive, true),
       discountPercent: parseDiscount(discountPercent),
     });
@@ -102,6 +106,7 @@ const updateCategory = async (req, res, next) => {
     if (discountPercent !== undefined) updates.discountPercent = parseDiscount(discountPercent);
     if (req.file || req.body.icon !== undefined) updates.icon = await resolveIcon(req);
     if (req.body.isActive !== undefined) updates.isActive = parseBoolean(req.body.isActive, true);
+    if (req.body.type !== undefined) updates.type = parseType(req.body.type);
     if (req.body.parent !== undefined) {
       const parent = parseParent(req.body.parent);
       if (parent && String(parent) === String(req.params.id)) {

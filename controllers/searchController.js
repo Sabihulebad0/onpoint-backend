@@ -3,6 +3,7 @@ const Category = require("../models/Category");
 const Order = require("../models/Order");
 const User = require("../models/User");
 const Coupon = require("../models/Coupon");
+const ContactInquiry = require("../models/ContactInquiry");
 const { hasPermission } = require("../utils/permissions");
 
 const escapeRegex = (value) => String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -18,7 +19,7 @@ const search = async (req, res, next) => {
     }
 
     const rx = new RegExp(escapeRegex(q), "i");
-    const result = { q, products: [], categories: [], orders: [], users: [], coupons: [] };
+    const result = { q, products: [], categories: [], orders: [], users: [], coupons: [], contacts: [] };
 
     const tasks = [];
 
@@ -84,6 +85,18 @@ const search = async (req, res, next) => {
       );
     }
 
+    if (type === "all" || type === "contacts") {
+      tasks.push(
+        ContactInquiry.find({
+          $or: [{ name: rx }, { email: rx }, { phone: rx }, { interestedIn: rx }, { message: rx }],
+        })
+          .limit(limit)
+          .then((items) => {
+            result.contacts = items;
+          })
+      );
+    }
+
     await Promise.all(tasks);
 
     result.total =
@@ -91,7 +104,8 @@ const search = async (req, res, next) => {
       result.categories.length +
       result.orders.length +
       result.users.length +
-      result.coupons.length;
+      result.coupons.length +
+      result.contacts.length;
 
     res.json(result);
   } catch (error) {

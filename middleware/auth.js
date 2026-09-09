@@ -46,4 +46,13 @@ const requireStaff = (req, res, next) => {
   return res.status(403).json({ message: "Staff or admin access required" });
 };
 
-module.exports = { protect, admin, requirePermission, requireStaff };
+const optionalProtect = async (req, res, next) => {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith("Bearer ")) {
+    req.user = null;
+    return next();
+  }
+  return protect(req, res, next);
+};
+
+module.exports = { protect, optionalProtect, admin, requirePermission, requireStaff };

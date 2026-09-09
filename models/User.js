@@ -21,6 +21,10 @@ const userSchema = new mongoose.Schema(
     },
     isActive: { type: Boolean, default: true },
     phone: { type: String, default: "", trim: true },
+    emailVerified: { type: Boolean, default: true },
+    emailOtpHash: { type: String, select: false },
+    emailOtpExpires: { type: Date, select: false },
+    emailOtpPurpose: { type: String, select: false },
     resetPasswordToken: { type: String, select: false },
     resetPasswordExpires: { type: Date, select: false },
     address: {

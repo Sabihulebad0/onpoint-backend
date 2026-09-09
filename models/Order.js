@@ -14,6 +14,7 @@ const orderItemSchema = new mongoose.Schema(
     price: { type: Number, required: true, min: 0 },
     size: String,
     color: String,
+    custom: { type: Boolean, default: false },
   },
   { _id: false }
 );
@@ -23,8 +24,10 @@ const orderSchema = new mongoose.Schema(
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      default: null,
     },
+    isGuest: { type: Boolean, default: false },
+    guestToken: { type: String, default: "" },
     items: { type: [orderItemSchema], required: true },
     shipping_address: {
       first_name: { type: String, default: "" },
@@ -71,6 +74,7 @@ const orderSchema = new mongoose.Schema(
       default: "pending",
     },
     assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    customer: { type: mongoose.Schema.Types.ObjectId, ref: "Customer", default: null },
     trackingId: { type: String, default: "" },
     deliveredAt: { type: Date, default: null },
     statusHistory: [
