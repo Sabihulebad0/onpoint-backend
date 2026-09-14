@@ -4,7 +4,7 @@ const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const connectDB = require("./config/db");
-const { initStorage, storageMode } = require("./config/storage");
+const { initStorage, rewriteResponseMedia, storageMode, streamMedia } = require("./config/storage");
 const errorHandler = require("./middleware/errorHandler");
 const authRoutes = require("./routes/authRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
@@ -20,6 +20,7 @@ const notificationRoutes = require("./routes/notificationRoutes");
 const attributeRoutes = require("./routes/attributeRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const contactRoutes = require("./routes/contactRoutes");
+const uploadRoutes = require("./routes/uploadRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -27,6 +28,15 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+
+app.use((req, res, next) => {
+  const sendJson = res.json.bind(res);
+  res.json = (body) => sendJson(rewriteResponseMedia(body));
+  next();
+});
+
+app.get(/^\/api\/media\/(.+)$/, streamMedia);
+app.head(/^\/api\/media\/(.+)$/, streamMedia);
 
 app.get("/api/health", (req, res) => {
   res.json({
@@ -50,6 +60,7 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/attributes", attributeRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/contact", contactRoutes);
+app.use("/api/uploads", uploadRoutes);
 
 app.use(errorHandler);
 

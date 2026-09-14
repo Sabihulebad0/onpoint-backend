@@ -46,13 +46,23 @@ const requireStaff = (req, res, next) => {
   return res.status(403).json({ message: "Staff or admin access required" });
 };
 
-const optionalProtect = async (req, res, next) => {
+const attachUserIfPresent = async (req) => {
+  req.user = null;
   const header = req.headers.authorization;
-  if (!header || !header.startsWith("Bearer ")) {
+  if (!header || !header.startsWith("Bearer ")) return;
+  try {
+    const token = header.split(" ")[1];
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findById(decoded.id);
+    if (user && user.isActive !== false) req.user = user;
+  } catch {
     req.user = null;
-    return next();
   }
-  return protect(req, res, next);
 };
 
-module.exports = { protect, optionalProtect, admin, requirePermission, requireStaff };
+const optionalProtect = async (req, res, next) => {
+  await attachUserIfPresent(req);
+  next();
+};
+
+module.exports = { protect, optionalProtect, attachUserIfPresent, admin, requirePermission, requireStaff };

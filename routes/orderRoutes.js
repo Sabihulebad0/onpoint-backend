@@ -19,8 +19,9 @@ const router = express.Router();
 const canRead = requirePermission("orders:read");
 const canWrite = requirePermission("orders:write");
 
-router.post("/", optionalProtect, createOrder);
-router.post("/quote", optionalProtect, quoteOrder);
+router.post("/checkout", createOrder);
+router.post("/", createOrder);
+router.post("/quote", quoteOrder);
 router.get("/mine", protect, getMyOrders);
 router.get("/", protect, canRead, getOrders);
 router.get("/couriers", protect, canRead, listCouriers);

@@ -10,9 +10,11 @@ const Coupon = require("../models/Coupon");
 const { hasPermission } = require("../utils/permissions");
 const { buildOrderTotals, withOrderTotals } = require("../utils/orderTotals");
 const { normalizeShippingAddress } = require("../utils/orderAddress");
+const { salesTaxForAddress } = require("../utils/usSalesTax");
 const { notifyAdmins, notifyUser } = require("../utils/notify");
 const { sendOrderCreatedEmail, sendOrderStatusEmail } = require("../utils/mail");
 const { upsertCustomerFromOrder } = require("../utils/customer");
+const { attachUserIfPresent } = require("../middleware/auth");
 
 const ORDER_STATUSES = ["pending", "paid", "shipped", "delivered", "cancelled", "returned", "refunded"];
 const LOW_STOCK_THRESHOLD = 5;
@@ -34,21 +36,50 @@ const monthRange = (month) => {
   };
 };
 
-const productPopulate = { path: "items.product", populate: { path: "category", select: "name slug discountPercent" } };
+const productPopulate = { path: "items.product", populate: { path: "category", select: "name slug discountPercent type" } };
+
+const isMongoId = (value) => /^[a-fA-F0-9]{24}$/.test(String(value || ""));
+
+const isMadeToOrder = (product, custom) =>
+  Boolean(custom) ||
+  product?.type === "customizable" ||
+  product?.category?.type === "customizable";
+
+const loadProductForRow = async (row) => {
+  const productId = row.productId || row.product;
+  const slug = String(row.slug || "").trim();
+  const populate = { path: "category", select: "name slug discountPercent type" };
+  if (isMongoId(productId)) {
+    const byId = await Product.findById(productId).populate(populate);
+    if (byId) return byId;
+  }
+  if (slug) {
+    const bySlug = await Product.findOne({ slug }).populate(populate);
+    if (bySlug) return bySlug;
+    const name = slug.replace(/-/g, " ").trim();
+    if (name) {
+      const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const byName = await Product.findOne({ name: new RegExp(`^${escaped}$`, "i") }).populate(populate);
+      if (byName) return byName;
+    }
+  }
+  return null;
+};
 
 const loadBodyItems = async (rawItems = []) => {
   const rows = [];
   for (const row of rawItems) {
-    const productId = row.productId || row.product;
-    if (!productId) continue;
-    const product = await Product.findById(productId).populate("category", "name slug discountPercent");
+    const product = await loadProductForRow(row);
     if (!product) continue;
     rows.push({
       product,
       quantity: Math.max(1, Number(row.quantity || 1)),
       size: String(row.size || ""),
       color: String(row.color || ""),
-      custom: Boolean(row.custom),
+      custom: Boolean(row.custom) || isMadeToOrder(product, row.custom),
+      customImage: String(row.customImage || ""),
+      customLogo: String(row.customLogo || ""),
+      customization: row.customization || null,
     });
   }
   return rows;
@@ -71,16 +102,34 @@ const loadUserCartRows = async (userId) => {
   };
 };
 
+const mergeCustomFields = (rows, bodyItems = []) =>
+  rows.map((row) => {
+    const match = (bodyItems || []).find(
+      (item) => String(item.productId || item.product) === String(row.product?._id)
+    );
+    if (!match) return row;
+    return {
+      ...row,
+      custom: Boolean(row.custom || match.custom),
+      customImage: match.customImage || row.customImage || "",
+      customLogo: match.customLogo || row.customLogo || "",
+      customization: match.customization || row.customization || null,
+    };
+  });
+
 const resolveCheckoutRows = async (req) => {
   if (req.user) {
     const loaded = await loadUserCartRows(req.user._id);
-    if (loaded.rows.length) return loaded;
+    if (loaded.rows.length) {
+      return { ...loaded, rows: mergeCustomFields(loaded.rows, req.body?.items) };
+    }
   }
   return { cart: null, rows: await loadBodyItems(req.body?.items || []) };
 };
 
 const createOrder = async (req, res, next) => {
   try {
+    await attachUserIfPresent(req);
     const { shippingAddress, shipping_address, paymentMethod = "cod", couponCode } = req.body;
     const { cart, rows } = await resolveCheckoutRows(req);
 
@@ -94,7 +143,9 @@ const createOrder = async (req, res, next) => {
 
     for (const item of rows) {
       const product = item.product;
-      if (!product || Number(product.stock || 0) < item.quantity) {
+      const stock = Number(product?.stock || 0);
+      const madeToOrder = isMadeToOrder(product, item.custom);
+      if (!product || (!madeToOrder && stock < item.quantity)) {
         return res.status(400).json({
           message: `Insufficient stock for ${product ? product.name : "a product"}`,
         });
@@ -105,12 +156,15 @@ const createOrder = async (req, res, next) => {
         product: product._id,
         name: product.name,
         sku: product.sku || "",
-        image: product.thumbnail || product.images?.[0] || "",
+        image: item.customImage || product.thumbnail || product.images?.[0] || "",
         quantity: item.quantity,
         price: priced.salePrice,
         size: item.size,
         color: item.color,
         custom: Boolean(item.custom),
+        customImage: item.customImage || "",
+        customLogo: item.customLogo || "",
+        customization: item.customization || null,
       });
       pricedItems.push({ product: priced, quantity: item.quantity, unitPrice: priced.salePrice });
       itemsPrice += priced.salePrice * item.quantity;
@@ -213,6 +267,8 @@ const createOrder = async (req, res, next) => {
     }
 
     for (const item of rows) {
+      if (isMadeToOrder(item.product, item.custom)) continue;
+      if (Number(item.product.stock || 0) < item.quantity) continue;
       const updated = await Product.findByIdAndUpdate(
         item.product._id,
         { $inc: { stock: -item.quantity } },
@@ -253,6 +309,7 @@ const createOrder = async (req, res, next) => {
 
 const quoteOrder = async (req, res, next) => {
   try {
+    await attachUserIfPresent(req);
     const { shippingAddress, shipping_address, couponCode } = req.body || {};
     const { cart, rows } = await resolveCheckoutRows(req);
     if (!rows.length) {

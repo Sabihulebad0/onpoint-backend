@@ -40,4 +40,32 @@ const singleImage = (field) => (req, res, next) => {
 const categoryIcon = singleImage("icon");
 const couponImage = singleImage("image");
 
-module.exports = { productImages, categoryIcon, couponImage };
+const customUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, cb) => {
+    const mime = String(file.mimetype || "").toLowerCase();
+    const name = String(file.originalname || "").toLowerCase();
+    const okMime = !mime || mime === "application/octet-stream" || /^image\/(jpeg|jpg|png|webp|gif)$/i.test(mime);
+    const okName = /\.(jpe?g|png|webp|gif)$/i.test(name) || !name.includes(".");
+    if (okMime && okName) return cb(null, true);
+    cb(new Error("Only JPG, PNG, WEBP, or GIF images are allowed"));
+  },
+}).single("file");
+
+const customImage = (req, res, next) => {
+  customUpload(req, res, (error) => {
+    if (error) {
+      error.statusCode = 400;
+      return next(error);
+    }
+    if (req.file) {
+      const name = String(req.file.originalname || "design.jpg");
+      if (!/\.(jpe?g|png|webp|gif)$/i.test(name)) req.file.originalname = `${name}.jpg`;
+      if (!/^image\//i.test(req.file.mimetype || "")) req.file.mimetype = "image/jpeg";
+    }
+    next();
+  });
+};
+
+module.exports = { productImages, categoryIcon, couponImage, customImage };

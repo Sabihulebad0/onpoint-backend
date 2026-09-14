@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const Product = require("../models/Product");
 const Category = require("../models/Category");
 const { saveImage, storageMode } = require("../config/storage");
@@ -304,6 +305,9 @@ const getProducts = async (req, res, next) => {
 
 const getProductById = async (req, res, next) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(404).json({ message: "Product not found" });
+    }
     const product = await Product.findById(req.params.id)
       .populate("category", CATEGORY_FIELDS)
       .populate("attributes", "title displayName option values isActive");

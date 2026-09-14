@@ -15,6 +15,9 @@ const orderItemSchema = new mongoose.Schema(
     size: String,
     color: String,
     custom: { type: Boolean, default: false },
+    customImage: { type: String, default: "" },
+    customLogo: { type: String, default: "" },
+    customization: { type: mongoose.Schema.Types.Mixed, default: null },
   },
   { _id: false }
 );

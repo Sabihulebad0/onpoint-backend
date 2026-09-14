@@ -21,6 +21,11 @@ const withPricing = (product) => {
   const salePrice = Number((originalPrice * (1 - discountPercent / 100)).toFixed(2));
   return {
     ...data,
+    _id: data._id != null ? String(data._id) : data._id,
+    category:
+      data.category && typeof data.category === "object"
+        ? { ...data.category, _id: data.category._id != null ? String(data.category._id) : data.category._id }
+        : data.category,
     originalPrice,
     discountPercent,
     salePrice,
