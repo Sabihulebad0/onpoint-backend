@@ -378,7 +378,7 @@ const quoteOrder = async (req, res, next) => {
 const getMyOrders = async (req, res, next) => {
   try {
     const orders = await Order.find({ user: req.user._id })
-      .populate("items.product", "name sku thumbnail images")
+      .populate("items.product", "name sku thumbnail images type")
       .sort({ createdAt: -1 });
     res.json(orders.map(withOrderTotals));
   } catch (error) {
@@ -428,7 +428,7 @@ const getOrders = async (req, res, next) => {
     const allOrders = await Order.find(filter)
       .populate("user", "name email phone role")
       .populate("assignedTo", "name email phone")
-      .populate("items.product", "name sku thumbnail images")
+      .populate("items.product", "name sku thumbnail images type")
       .sort({ createdAt: -1 });
 
     const summaries = {
@@ -461,7 +461,7 @@ const getOrder = async (req, res, next) => {
     const order = await Order.findById(req.params.id)
       .populate("user", "name email phone role")
       .populate("assignedTo", "name email phone")
-      .populate("items.product", "name sku thumbnail images");
+      .populate("items.product", "name sku thumbnail images type");
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
     }
@@ -496,7 +496,7 @@ const updateOrderStatus = async (req, res, next) => {
     await order.save();
     await order.populate("user", "name email phone role");
     await order.populate("assignedTo", "name email phone");
-    await order.populate("items.product", "name sku thumbnail images");
+    await order.populate("items.product", "name sku thumbnail images type");
 
     const ownerId = order.user?._id || order.user;
     await notifyUser(ownerId, {
@@ -523,7 +523,7 @@ const populatedOrder = (query) =>
   query
     .populate("user", "name email phone role")
     .populate("assignedTo", "name email phone")
-    .populate("items.product", "name sku thumbnail images");
+    .populate("items.product", "name sku thumbnail images type");
 
 const listCouriers = async (req, res, next) => {
   try {
