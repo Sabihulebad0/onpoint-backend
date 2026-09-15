@@ -118,16 +118,18 @@ const parseDimensions = (body, existing = {}) => {
 const buildPayload = async (req, existing = {}) => {
   const thumbnailFile = req.files?.thumbnail?.[0];
   const galleryFiles = req.files?.images || [];
+  const bodyHas = (key) => Object.prototype.hasOwnProperty.call(req.body, key);
 
-  let thumbnail = req.body.existingThumbnail || existing.thumbnail || "";
+  let thumbnail = bodyHas("existingThumbnail")
+    ? String(req.body.existingThumbnail || "")
+    : existing.thumbnail || "";
   if (thumbnailFile) {
     thumbnail = await saveImage(thumbnailFile);
   }
 
-  let images = parseList(req.body.existingImages);
-  if (!images.length && !galleryFiles.length) {
-    images = existing.images || [];
-  }
+  let images = bodyHas("existingImages")
+    ? parseList(req.body.existingImages)
+    : existing.images || [];
   for (const file of galleryFiles) {
     const url = await saveImage(file);
     if (url) images.push(url);

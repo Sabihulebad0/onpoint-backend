@@ -2,12 +2,12 @@ const multer = require("multer");
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024, files: 12 },
+  limits: { fileSize: 80 * 1024 * 1024, files: 12 },
   fileFilter: (req, file, cb) => {
-    if (/^image\/(jpeg|png|webp|gif|jpg)$/i.test(file.mimetype)) {
+    if (/^image\/(jpeg|png|webp|gif|jpg)$/i.test(file.mimetype) || /^video\/(mp4|webm|quicktime|ogg)$/i.test(file.mimetype)) {
       return cb(null, true);
     }
-    cb(new Error("Only JPG, PNG, WEBP, or GIF images are allowed"));
+    cb(new Error("Only JPG, PNG, WEBP, GIF, MP4, or WEBM files are allowed"));
   },
 });
 
