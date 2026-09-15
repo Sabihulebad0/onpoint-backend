@@ -5,6 +5,7 @@ const { canAccessAdmin } = require("../utils/permissions");
 const { publicUser } = require("../utils/publicUser");
 const { notifyAdmins } = require("../utils/notify");
 const { upsertCustomerFromUser } = require("../utils/customer");
+const { mailConfigured, sendOtpEmail, sendWelcomeEmail, sendPasswordChangedEmail } = require("../utils/mail");
 
 const OTP_MINUTES = 10;
 const OTP_FIELDS = "+emailOtpHash +emailOtpExpires +emailOtpPurpose";
@@ -42,6 +43,21 @@ const sendOtpSafe = async (user, code, purpose) => {
   }
 };
 
+const notifySignup = (user) =>
+  notifyAdmins({
+    title: "New customer signed up",
+    message: `${user.name} (${user.email}) created an account.`,
+    type: "user",
+    link: `/users/${user._id}/edit`,
+    meta: { userId: user._id },
+  });
+
+const sessionPayload = (user) => ({
+  token: generateToken(user._id),
+  user: publicUser(user),
+  canAccessAdmin: canAccessAdmin(user),
+});
+
 const register = async (req, res, next) => {
   try {
     const name = String(req.body.name || "").trim();
@@ -57,6 +73,7 @@ const register = async (req, res, next) => {
 
     const requestedRole = String(req.body.role || "").toLowerCase();
     const role = requestedRole === "delivery" ? "delivery" : "customer";
+    const canEmail = mailConfigured();
     let user = await User.findOne({ email }).select(`+password ${OTP_FIELDS}`);
 
     if (user && (user.emailVerified !== false || user.role !== "customer")) {
@@ -67,6 +84,16 @@ const register = async (req, res, next) => {
       user.name = name;
       user.phone = phone || user.phone;
       user.password = password;
+      if (!canEmail) {
+        user.emailVerified = true;
+        user.emailOtpHash = undefined;
+        user.emailOtpExpires = undefined;
+        user.emailOtpPurpose = undefined;
+        await user.save();
+        await upsertCustomerFromUser(user);
+        await notifySignup(user);
+        return res.status(200).json(sessionPayload(user));
+      }
       const code = await assignOtp(user, "signup");
       await sendOtpSafe(user, code, "signup");
       return res.status(200).json({
@@ -83,20 +110,14 @@ const register = async (req, res, next) => {
       password,
       phone,
       role,
-      emailVerified: role !== "customer",
+      emailVerified: role !== "customer" || !canEmail,
     });
     await upsertCustomerFromUser(user);
+    await notifySignup(user);
 
-    if (role === "customer") {
+    if (role === "customer" && canEmail) {
       const code = await assignOtp(user, "signup");
       await sendOtpSafe(user, code, "signup");
-      await notifyAdmins({
-        title: "New customer signed up",
-        message: `${user.name} (${user.email}) created an account.`,
-        type: "user",
-        link: `/users/${user._id}/edit`,
-        meta: { userId: user._id },
-      });
       return res.status(201).json({
         needsVerification: true,
         email: user.email,
@@ -105,17 +126,7 @@ const register = async (req, res, next) => {
       });
     }
 
-    await notifyAdmins({
-      title: "New customer signed up",
-      message: `${user.name} (${user.email}) created an account.`,
-      type: "user",
-      link: `/users/${user._id}/edit`,
-      meta: { userId: user._id },
-    });
-    res.status(201).json({
-      token: generateToken(user._id),
-      user: publicUser(user),
-    });
+    res.status(201).json(sessionPayload(user));
   } catch (error) {
     next(error);
   }
@@ -136,14 +147,19 @@ const login = async (req, res, next) => {
     }
 
     if (user.role === "customer" && user.emailVerified === false) {
-      const code = await assignOtp(user, "signup");
-      await sendOtpSafe(user, code, "signup");
-      return res.status(403).json({
-        needsVerification: true,
-        email: user.email,
-        message: "Verify your email before signing in. We sent a new code.",
-        ...otpPayload(code),
-      });
+      if (!mailConfigured()) {
+        user.emailVerified = true;
+        await user.save({ validateBeforeSave: false });
+      } else {
+        const code = await assignOtp(user, "signup");
+        await sendOtpSafe(user, code, "signup");
+        return res.status(403).json({
+          needsVerification: true,
+          email: user.email,
+          message: "Verify your email before signing in. We sent a new code.",
+          ...otpPayload(code),
+        });
+      }
     }
 
     await upsertCustomerFromUser(user);
