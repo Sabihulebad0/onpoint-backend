@@ -79,6 +79,7 @@ const loadBodyItems = async (rawItems = []) => {
       custom: Boolean(row.custom) || isMadeToOrder(product, row.custom),
       customImage: String(row.customImage || ""),
       customLogo: String(row.customLogo || ""),
+      customImages: Array.isArray(row.customImages) ? row.customImages.filter(Boolean) : [],
       customization: row.customization || null,
     });
   }
@@ -98,6 +99,10 @@ const loadUserCartRows = async (userId) => {
         size: item.size,
         color: item.color,
         custom: Boolean(item.custom),
+        customImage: item.customImage || "",
+        customLogo: item.customLogo || "",
+        customImages: item.customImages || [],
+        customization: item.customization || null,
       })),
   };
 };
@@ -113,6 +118,7 @@ const mergeCustomFields = (rows, bodyItems = []) =>
       custom: Boolean(row.custom || match.custom),
       customImage: match.customImage || row.customImage || "",
       customLogo: match.customLogo || row.customLogo || "",
+      customImages: match.customImages || row.customImages || [],
       customization: match.customization || row.customization || null,
     };
   });
@@ -164,6 +170,11 @@ const createOrder = async (req, res, next) => {
         custom: Boolean(item.custom),
         customImage: item.customImage || "",
         customLogo: item.customLogo || "",
+        customImages: [
+          ...(Array.isArray(item.customImages) ? item.customImages : []),
+          item.customImage,
+          item.customLogo,
+        ].filter((value, index, list) => value && list.indexOf(value) === index),
         customization: item.customization || null,
       });
       pricedItems.push({ product: priced, quantity: item.quantity, unitPrice: priced.salePrice });

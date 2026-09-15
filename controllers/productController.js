@@ -5,6 +5,7 @@ const { saveImage, storageMode } = require("../config/storage");
 const { withPricing } = require("../utils/pricing");
 const { parseCouponFields, upsertScopedCoupon, couponsForTarget } = require("../utils/coupon");
 const { parseType } = require("../utils/itemType");
+const { attachRatings } = require("./reviewController");
 
 const CATEGORY_FIELDS = "name slug discountPercent type";
 
@@ -229,7 +230,7 @@ const searchProducts = async (req, res, next) => {
 
     res.json({
       q,
-      products: products.map(withPricing),
+      products: await attachRatings(products.map(withPricing)),
       total,
     });
   } catch (error) {
@@ -293,7 +294,7 @@ const getProducts = async (req, res, next) => {
     ]);
 
     res.json({
-      products: products.map(withPricing),
+      products: await attachRatings(products.map(withPricing)),
       page: Number(page),
       pages: Math.ceil(total / Number(limit)) || 1,
       total,
@@ -318,7 +319,7 @@ const getProductById = async (req, res, next) => {
       productId: product._id,
       categoryId: product.category?._id || product.category,
     });
-    res.json({ ...withPricing(product), coupons });
+    res.json({ ...(await attachRatings(withPricing(product))), coupons });
   } catch (error) {
     next(error);
   }

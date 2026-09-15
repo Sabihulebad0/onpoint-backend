@@ -1,11 +1,14 @@
 require("dotenv").config();
 
 const path = require("path");
+const http = require("http");
 const express = require("express");
 const cors = require("cors");
+const { Server } = require("socket.io");
 const connectDB = require("./config/db");
 const { initStorage, rewriteResponseMedia, storageMode, streamMedia } = require("./config/storage");
 const errorHandler = require("./middleware/errorHandler");
+const { attachChat } = require("./socket/chat");
 const authRoutes = require("./routes/authRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
 const productRoutes = require("./routes/productRoutes");
@@ -21,9 +24,14 @@ const attributeRoutes = require("./routes/attributeRoutes");
 const dashboardRoutes = require("./routes/dashboardRoutes");
 const contactRoutes = require("./routes/contactRoutes");
 const uploadRoutes = require("./routes/uploadRoutes");
+const chatRoutes = require("./routes/chatRoutes");
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: "*", methods: ["GET", "POST"] },
+});
+attachChat(io);
 
 app.use(cors());
 app.use(express.json());
@@ -61,6 +69,7 @@ app.use("/api/attributes", attributeRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/uploads", uploadRoutes);
+app.use("/api/chat", chatRoutes);
 
 app.use(errorHandler);
 
@@ -72,8 +81,16 @@ const start = async () => {
     const host = process.env.HOST || "0.0.0.0";
     const tryListen = (port) =>
       new Promise((resolve, reject) => {
-        const server = app.listen(port, host, () => resolve(port));
-        server.once("error", reject);
+        const onListen = () => {
+          server.off("error", onError);
+          resolve(port);
+        };
+        const onError = (error) => {
+          server.off("listening", onListen);
+          reject(error);
+        };
+        server.once("error", onError);
+        server.listen(port, host, onListen);
       });
 
     let port = preferred;

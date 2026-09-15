@@ -11,6 +11,10 @@ const cartItemSchema = new mongoose.Schema(
     size: String,
     color: String,
     custom: { type: Boolean, default: false },
+    customImage: { type: String, default: "" },
+    customLogo: { type: String, default: "" },
+    customImages: [{ type: String }],
+    customization: { type: mongoose.Schema.Types.Mixed, default: null },
   },
   { _id: false }
 );

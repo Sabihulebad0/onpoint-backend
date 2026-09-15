@@ -17,6 +17,10 @@ const pricedItemsFromCart = (cart) =>
         size: item.size,
         color: item.color,
         custom: Boolean(item.custom),
+        customImage: item.customImage || "",
+        customLogo: item.customLogo || "",
+        customImages: item.customImages || [],
+        customization: item.customization || null,
       };
     });
 
@@ -30,6 +34,10 @@ const withCartPricing = async (cart) => {
     size: item.size,
     color: item.color,
     custom: Boolean(item.custom),
+    customImage: item.customImage || "",
+    customLogo: item.customLogo || "",
+    customImages: item.customImages || [],
+    customization: item.customization || null,
   }));
   const itemsPrice = Number(
     pricedItems.reduce((sum, item) => sum + item.unitPrice * item.quantity, 0).toFixed(2)
@@ -92,6 +100,12 @@ const addToCart = async (req, res, next) => {
     const size = String(req.body.size || "").trim();
     const color = String(req.body.color || "").trim();
     const custom = Boolean(req.body.custom);
+    const customImage = String(req.body.customImage || "");
+    const customLogo = String(req.body.customLogo || "");
+    const customImages = Array.isArray(req.body.customImages)
+      ? req.body.customImages.map((value) => String(value || "")).filter(Boolean)
+      : [customImage, customLogo].filter(Boolean);
+    const customization = req.body.customization || null;
 
     if (!productId) {
       return res.status(400).json({ message: "productId is required" });
@@ -130,12 +144,17 @@ const addToCart = async (req, res, next) => {
     );
 
     const nextQty = (existing ? existing.quantity : 0) + Math.floor(qty);
-    if (product.stock != null && nextQty > Number(product.stock)) {
+    const madeToOrder = custom || product.type === "customizable";
+    if (!madeToOrder && product.stock != null && nextQty > Number(product.stock)) {
       return res.status(400).json({ message: "Not enough stock for this product" });
     }
 
     if (existing) {
       existing.quantity = nextQty;
+      if (customImage) existing.customImage = customImage;
+      if (customLogo) existing.customLogo = customLogo;
+      if (customImages.length) existing.customImages = customImages;
+      if (customization) existing.customization = customization;
     } else {
       cart.items.push({
         product: productId,
@@ -143,6 +162,10 @@ const addToCart = async (req, res, next) => {
         size: resolvedSize,
         color: resolvedColor,
         custom,
+        customImage,
+        customLogo,
+        customImages,
+        customization,
       });
     }
 

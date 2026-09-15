@@ -68,4 +68,32 @@ const customImage = (req, res, next) => {
   });
 };
 
-module.exports = { productImages, categoryIcon, couponImage, customImage };
+const anyUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 4 },
+  fileFilter: (req, file, cb) => {
+    const mime = String(file.mimetype || "").toLowerCase();
+    const okMime = !mime || mime === "application/octet-stream" || /^image\//i.test(mime);
+    if (okMime) return cb(null, true);
+    cb(new Error("Only image files are allowed"));
+  },
+}).any();
+
+const anyImage = (req, res, next) => {
+  anyUpload(req, res, (error) => {
+    if (error) {
+      error.statusCode = 400;
+      return next(error);
+    }
+    const files = Array.isArray(req.files) ? req.files : [];
+    req.file = req.file || files[0];
+    if (req.file) {
+      const name = String(req.file.originalname || "avatar.jpg");
+      if (!/\.(jpe?g|png|webp|gif)$/i.test(name)) req.file.originalname = `${name}.jpg`;
+      if (!/^image\//i.test(req.file.mimetype || "")) req.file.mimetype = "image/jpeg";
+    }
+    next();
+  });
+};
+
+module.exports = { productImages, categoryIcon, couponImage, customImage, anyImage };
